@@ -5,14 +5,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Development Commands
 
 ```bash
-# Run the Streamlit application
-streamlit run app.py
+# Create and activate virtual environment
+python -m venv .venv
+source .venv/bin/activate  # macOS/Linux
+# .venv\Scripts\activate   # Windows
 
 # Install dependencies
 pip install -r requirements.txt
 
-# Run in virtual environment (recommended)
-source .venv/bin/activate
+# Run the Streamlit application
 streamlit run app.py
 ```
 
@@ -65,6 +66,11 @@ requirements.txt        # Dependencies
 
 ### Running the MCP Server
 ```bash
+# Create and activate virtual environment (if not done already)
+python -m venv .venv
+source .venv/bin/activate  # macOS/Linux
+# .venv\Scripts\activate   # Windows
+
 # Install dependencies
 pip install -r requirements.txt
 
@@ -72,14 +78,42 @@ pip install -r requirements.txt
 python server.py
 ```
 
-### MCP Configuration
-Add to your Claude Desktop config:
+### MCP Configuration for Claude Desktop
+
+**Step 1: Locate your Claude Desktop config file**
+- **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
+
+**Step 2: Add the tail-risk-analyzer server to your config**
 ```json
-"tail-risk-analyzer": {
-  "command": "/path/to/your/.venv/bin/python",
-  "args": ["/path/to/Tail-Risk-App-Streamlit/server.py"]
+{
+  "mcpServers": {
+    "tail-risk-analyzer": {
+      "command": "/path/to/your/.venv/bin/python",
+      "args": ["/path/to/Tail-Risk-App-Streamlit/server.py"]
+    }
+  }
 }
 ```
+
+**Step 3: Update the paths to match your setup**
+Replace `/path/to/your/.venv/bin/python` with your actual virtual environment path.
+Replace `/path/to/Tail-Risk-App-Streamlit/server.py` with your actual project path.
+
+**Example with real paths:**
+```json
+{
+  "mcpServers": {
+    "tail-risk-analyzer": {
+      "command": "/Users/username/Documents/dev/Tail-Risk-App-Streamlit/.venv/bin/python",
+      "args": ["/Users/username/Documents/dev/Tail-Risk-App-Streamlit/server.py"]
+    }
+  }
+}
+```
+
+**Step 4: Restart Claude Desktop**
+Close and reopen Claude Desktop for the changes to take effect.
 
 ### Available MCP Tool
 - `analyze_csv_flight_data`: Complete tail risk analysis from CSV data using proven algorithms from the Streamlit app
@@ -90,3 +124,45 @@ Add to your Claude Desktop config:
 - Risk categorization and deadline analysis
 - Comprehensive statistical metrics
 - Uses the exact working code from app.py
+
+## Testing with Claude/Sonnet
+
+### Step 1: Verify Setup
+After restarting Claude Desktop, the tool should be available. You can verify by asking Claude:
+*"What tools do you have access to?"*
+
+You should see `analyze_csv_flight_data` in the list.
+
+### Step 2: Test with Sample Data
+Ask Claude to analyze flight data using this sample:
+
+**Prompt:** *"Use the analyze_csv_flight_data tool to analyze this flight data for a 08:30 scheduled arrival with a 09:00 deadline:"*
+
+**Sample CSV Data:**
+```csv
+Date,Aircraft,Origin,Destination,Departure,Arrival,Duration
+21-Nov-25,A320,BCN,CDG,07:17AM,08:34AM,1h 17m
+20-Nov-25,A20N,BCN,CDG,06:56AM,08:08AM,1h 12m
+19-Nov-25,A320,BCN,CDG,07:15AM,08:45AM,1h 30m
+18-Nov-25,A320,BCN,CDG,07:20AM,Cancelled,Cancelled
+17-Nov-25,A20N,BCN,CDG,07:25AM,08:30AM,1h 05m
+```
+
+**Parameters:**
+- `scheduled_time`: "08:30"
+- `deadline_time`: "09:00"
+
+### Step 3: Expected Results
+The analysis should return:
+- **Route**: BCN → CDG
+- **Flights Analyzed**: 5 total, with smart filtering applied
+- **Cancellation Rate**: 20% (1 cancelled flight)
+- **Risk Assessment**: Based on delay distribution and deadline buffer
+- **Miss Probability**: Calculated based on historical delays and cancellations
+
+### Troubleshooting
+If the tool isn't working:
+1. Check the Claude Desktop logs for connection errors
+2. Verify your config file paths are correct
+3. Make sure the virtual environment has all dependencies installed
+4. Test the server locally with `python test_simple_server.py`

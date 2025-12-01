@@ -13,6 +13,8 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta, time
 from io import StringIO
+import requests
+from urllib.parse import urljoin
 
 from mcp.server import Server
 import mcp.server.stdio
@@ -161,6 +163,128 @@ def analyze_tail_risk(df: pd.DataFrame, sched_time: str, deadline_time: str = No
     except Exception as e:
         return {"error": f"Analysis failed: {str(e)}"}
 
+def collect_flightaware_data(flight_identifier: str, api_key: str, months_back: int = 3) -> str:
+    """Collect FlightAware data and format as CSV for analysis"""
+    try:
+        url = f"https://aeroapi.flightaware.com/aeroapi/flights/{flight_identifier}"
+        headers = {"x-apikey": api_key}
+        params = {"max_pages": max(1, months_back)}  # More pages for more history
+        
+        response = requests.get(url, headers=headers, params=params, timeout=30)
+        if response.status_code != 200:
+            return f"API Error {response.status_code}: {response.text}"
+        
+        data = response.json()
+        flights = data.get('flights', [])
+        if not flights:
+            return "No flight history found"
+        
+        # Convert to CSV format
+        csv_rows = []
+        csv_rows.append("Date,Aircraft,Origin,Destination,Departure,Arrival,Duration")
+        
+        for f in flights:
+            try:
+                # Extract data
+                origin = f.get('origin', {}).get('code', '?')
+                dest = f.get('destination', {}).get('code', '?') 
+                aircraft = f.get('aircraft_type', '?')
+                status = f.get('status', '')
+                
+                # Handle times
+                sched_out = f.get('scheduled_out')
+                sched_in = f.get('scheduled_in')
+                actual_out = f.get('actual_out')
+                actual_in = f.get('actual_in') or f.get('estimated_in')
+                
+                if sched_out and sched_in:
+                    # Convert to local times and format
+                    sched_out_dt = pd.to_datetime(sched_out, utc=True)
+                    sched_in_dt = pd.to_datetime(sched_in, utc=True)
+                    
+                    # Format date as DD-MMM-YY
+                    date_str = sched_out_dt.strftime('%d-%b-%y')
+                    
+                    # Format times as HH:MMAM/PM
+                    dep_time = sched_out_dt.strftime('%I:%M%p')
+                    
+                    if 'Cancelled' in status:
+                        arr_time = "Cancelled"
+                        duration = "Cancelled"
+                    else:
+                        if actual_in:
+                            actual_in_dt = pd.to_datetime(actual_in, utc=True)
+                            arr_time = actual_in_dt.strftime('%I:%M%p')
+                            duration_mins = int((actual_in_dt - sched_out_dt).total_seconds() / 60)
+                            duration = f"{duration_mins//60}h {duration_mins%60}m"
+                        else:
+                            arr_time = sched_in_dt.strftime('%I:%M%p')
+                            duration = "Scheduled"
+                    
+                    csv_rows.append(f"{date_str},{aircraft},{origin},{dest},{dep_time},{arr_time},{duration}")
+                    
+            except Exception as e:
+                continue  # Skip problematic entries
+        
+        if len(csv_rows) <= 1:
+            return "No valid flight data could be processed"
+        
+        return "\n".join(csv_rows)
+        
+    except Exception as e:
+        return f"Data collection failed: {str(e)}"
+
+def generate_sample_csv(route: str = "BCN-CDG", days_back: int = 90) -> str:
+    """Generate realistic sample CSV data for testing or demonstration"""
+    import random
+    from datetime import date, timedelta
+    
+    try:
+        # Parse route
+        if '-' in route:
+            origin, dest = route.split('-', 1)
+        else:
+            origin, dest = "BCN", "CDG"
+        
+        csv_rows = []
+        csv_rows.append("Date,Aircraft,Origin,Destination,Departure,Arrival,Duration")
+        
+        # Generate sample data
+        aircraft_types = ["A320", "A20N", "A321", "B738"]
+        base_dep_time = datetime.strptime("07:20", "%H:%M").time()
+        base_arr_time = datetime.strptime("08:35", "%H:%M").time()
+        
+        for i in range(days_back):
+            flight_date = date.today() - timedelta(days=i)
+            date_str = flight_date.strftime('%d-%b-%y')
+            
+            # Simulate realistic variations
+            dep_delay = random.randint(-5, 15)  # Usually 0-15 min late
+            arr_delay = dep_delay + random.randint(-10, 20)  # Flight time variations
+            
+            # 5% chance of cancellation
+            if random.random() < 0.05:
+                aircraft = random.choice(aircraft_types)
+                dep_time = (datetime.combine(date.today(), base_dep_time) + 
+                           timedelta(minutes=dep_delay)).strftime('%I:%M%p')
+                csv_rows.append(f"{date_str},{aircraft},{origin},{dest},{dep_time},Cancelled,Cancelled")
+            else:
+                aircraft = random.choice(aircraft_types)
+                dep_time = (datetime.combine(date.today(), base_dep_time) + 
+                           timedelta(minutes=dep_delay)).strftime('%I:%M%p')
+                arr_time = (datetime.combine(date.today(), base_arr_time) + 
+                           timedelta(minutes=arr_delay)).strftime('%I:%M%p')
+                
+                duration_mins = 75 + random.randint(-10, 20)  # ~1h 15m flight
+                duration = f"{duration_mins//60}h {duration_mins%60:02d}m"
+                
+                csv_rows.append(f"{date_str},{aircraft},{origin},{dest},{dep_time},{arr_time},{duration}")
+        
+        return "\n".join(csv_rows)
+        
+    except Exception as e:
+        return f"Sample generation failed: {str(e)}"
+
 # --- MCP SERVER SETUP ---
 
 server = Server("tail-risk-analyzer")
@@ -189,6 +313,49 @@ async def handle_list_tools() -> List[types.Tool]:
                     }
                 },
                 "required": ["csv_content", "scheduled_time"]
+            }
+        ),
+        types.Tool(
+            name="collect_flightaware_csv",
+            description="Collect flight history from FlightAware API and format as CSV for analysis",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "flight_identifier": {
+                        "type": "string",
+                        "description": "Flight identifier (e.g., 'VY6612', 'AA1234')"
+                    },
+                    "api_key": {
+                        "type": "string",
+                        "description": "FlightAware API key"
+                    },
+                    "months_back": {
+                        "type": "integer",
+                        "description": "Number of months of history to collect (1-6, default 3)",
+                        "default": 3
+                    }
+                },
+                "required": ["flight_identifier", "api_key"]
+            }
+        ),
+        types.Tool(
+            name="generate_sample_csv",
+            description="Generate realistic sample CSV flight data for testing and demonstration purposes",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "route": {
+                        "type": "string",
+                        "description": "Flight route in format ORIGIN-DESTINATION (e.g., 'BCN-CDG', 'JFK-LAX')",
+                        "default": "BCN-CDG"
+                    },
+                    "days_back": {
+                        "type": "integer", 
+                        "description": "Number of days of sample data to generate (30-180, default 90)",
+                        "default": 90
+                    }
+                },
+                "required": []
             }
         )
     ]
@@ -232,6 +399,79 @@ async def handle_call_tool(name: str, arguments: Dict[str, Any]) -> List[types.T
                 type="text",
                 text=json.dumps({"error": f"Tool execution failed: {str(e)}"})
             )]
+    
+    elif name == "collect_flightaware_csv":
+        try:
+            flight_identifier = arguments["flight_identifier"]
+            api_key = arguments["api_key"]
+            months_back = arguments.get("months_back", 3)
+            
+            csv_content = collect_flightaware_data(flight_identifier, api_key, months_back)
+            
+            # Check if it's an error message
+            if csv_content.startswith("API Error") or csv_content.startswith("No flight") or csv_content.startswith("Data collection failed"):
+                return [types.TextContent(
+                    type="text",
+                    text=json.dumps({"error": csv_content})
+                )]
+            
+            result = {
+                "status": "success",
+                "flight_identifier": flight_identifier,
+                "months_requested": months_back,
+                "csv_content": csv_content,
+                "rows_collected": len(csv_content.split('\n')) - 1  # Subtract header
+            }
+            
+            return [types.TextContent(
+                type="text",
+                text=json.dumps(result, indent=2)
+            )]
+            
+        except Exception as e:
+            print(f"CSV collection error: {e}", file=sys.stderr)
+            return [types.TextContent(
+                type="text",
+                text=json.dumps({"error": f"CSV collection failed: {str(e)}"})
+            )]
+    
+    elif name == "generate_sample_csv":
+        try:
+            route = arguments.get("route", "BCN-CDG")
+            days_back = arguments.get("days_back", 90)
+            
+            # Validate parameters
+            days_back = max(30, min(180, days_back))  # Limit to 30-180 days
+            
+            csv_content = generate_sample_csv(route, days_back)
+            
+            if csv_content.startswith("Sample generation failed"):
+                return [types.TextContent(
+                    type="text",
+                    text=json.dumps({"error": csv_content})
+                )]
+            
+            result = {
+                "status": "success",
+                "route": route,
+                "days_generated": days_back,
+                "csv_content": csv_content,
+                "rows_generated": len(csv_content.split('\n')) - 1,
+                "note": "This is simulated data for testing purposes only"
+            }
+            
+            return [types.TextContent(
+                type="text",
+                text=json.dumps(result, indent=2)
+            )]
+            
+        except Exception as e:
+            print(f"Sample generation error: {e}", file=sys.stderr)
+            return [types.TextContent(
+                type="text",
+                text=json.dumps({"error": f"Sample generation failed: {str(e)}"})
+            )]
+    
     else:
         return [types.TextContent(
             type="text",
