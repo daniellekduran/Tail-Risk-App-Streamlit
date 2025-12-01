@@ -1,0 +1,24 @@
+# --------------------
+# Python Specific Files
+# --------------------
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+.ipynb_checkpoints
+venv/
+.venv/  # Virtual environment folder used by the project
+
+# --------------------
+# IDE/OS Files
+# --------------------
+.vscode/  # VS Code files
+.idea/    # IntelliJ/PyCharm files
+.DS_Store # Mac Finder files
+
+# --------------------
+# APPLICATION SECRETS (CRITICAL)
+# --------------------
+# This prevents Streamlit secrets and API keys from being committed.
+.streamlit/secrets.toml
