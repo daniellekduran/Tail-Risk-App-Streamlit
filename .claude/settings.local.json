@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find:*)",
+      "Bash(source:*)",
+      "Bash(pip install:*)",
+      "Bash(streamlit run:*)",
+      "Bash(mkdir:*)",
+      "Bash(python:*)",
+      "Bash(timeout 5s python -m tail_risk_analyzer.mcp_server:*)",
+      "Bash(timeout:*)",
+      "Bash(grep:*)"
+    ],
+    "deny": []
+  }
+}
